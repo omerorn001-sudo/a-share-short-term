@@ -79,6 +79,22 @@ def _prefixed(code: str) -> str:
     return "sz" + code
 
 
+def _sina_kline(code: str, days: int) -> pd.DataFrame:
+    import json
+    import requests
+    r = requests.get("https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_x=/CN_MarketDataService.getKLineData",
+                     params={"symbol": _prefixed(code), "scale": 240, "ma": "no", "datalen": min(int(days * 0.75) + 30, 1800)},
+                     headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    t = r.text
+    df = pd.DataFrame(json.loads(t[t.index("(") + 1: t.rindex(")")])).rename(columns={"day": "date"})
+    df["date"] = pd.to_datetime(df["date"])
+    for c in ["open", "high", "low", "close", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["pct_chg"] = df["close"].pct_change() * 100
+    df["amount"] = df["volume"] * (df["open"] + df["high"] + df["low"] + df["close"]) / 4   # 估算
+    return df[["date", "open", "high", "low", "close", "volume", "amount", "pct_chg"]]
+
+
 def stock_hist(code: str, start: str, end: str, adjust: str = "qfq", cache: bool = True) -> pd.DataFrame:
     """个股日线（默认前复权）。start/end 形如 20230101。"""
     code = str(code).zfill(6)
@@ -96,6 +112,13 @@ def stock_hist(code: str, start: str, end: str, adjust: str = "qfq", cache: bool
             from . import tencent
             days = (pd.Timestamp(end) - pd.Timestamp(start)).days
             df = tencent.kline(code, n=min(int(days * 0.75) + 30, 2000), fq=adjust or "qfq")
+            df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
+            if len(df):
+                return df.reset_index(drop=True)
+        except Exception:
+            pass
+        try:                                     # 新浪日 K（不复权，含当天）
+            df = _sina_kline(code, (pd.Timestamp(end) - pd.Timestamp(start)).days)
             df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
             if len(df):
                 return df.reset_index(drop=True)
@@ -147,7 +170,7 @@ def index_hist(symbol: str = "sh000001") -> pd.DataFrame:
         except Exception:
             return _retry(lambda: ak.stock_zh_index_daily(symbol=symbol))
     df = _cached(f"index_{symbol}", fetch, max_age_hours=6, final_after_close=True)
-    if "amount" not in df:                      # 旧缓存来自新浪源，没有成交额
+    if "amount" not in df and symbol in ("sh000001", "sz399001"):   # 旧缓存来自新浪源，没有成交额（两市成交额要用）
         (CACHE_DIR / f"index_{symbol}.csv").unlink(missing_ok=True)
         df = _cached(f"index_{symbol}", fetch, max_age_hours=6)
     df["date"] = pd.to_datetime(df["date"])

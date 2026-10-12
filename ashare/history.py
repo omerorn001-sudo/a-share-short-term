@@ -246,8 +246,44 @@ def sector_windows(pct: pd.DataFrame, top: int = 5) -> tuple[pd.DataFrame, pd.Da
     return pd.DataFrame(rows), summary
 
 
+def _sector_flow_browser() -> pd.DataFrame | None:
+    """经外部浏览器读取东财行业板块资金日线（约最近 120 个交易日）。"""
+    from . import browser_fetch as bf
+    lst = [f"https://push2.eastmoney.com/api/qt/clist/get?pn={i}&pz=200&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14"
+           for i in (1, 2, 3)]
+    r = bf.fetch_json(lst)
+    boards = [x for u in lst if not isinstance(r[u], Exception) for x in ((r[u].get("data") or {}).get("diff") or [])]
+    want = set(dc.industry_map()["industry"])
+    boards = [b for b in boards if b["f14"] in want]
+    if not boards:
+        return None
+    urls = {b["f14"]: f"https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid=90.{b['f12']}&lmt=0&klt=101"
+                      "&fields1=f1,f2,f3,f7&fields2=f51,f52" for b in boards}
+    res = bf.fetch_json(list(urls.values()))
+    ser = {}
+    for name, u in urls.items():
+        j = res.get(u)
+        if isinstance(j, dict) and j.get("data"):
+            k = [x.split(",") for x in j["data"]["klines"]]
+            ser[name] = pd.Series([float(v) for _, v in k], index=pd.to_datetime([d for d, _ in k]))
+    return pd.DataFrame(ser).sort_index() / 1e8 if ser else None
+
+
 def sector_flow_windows(top: int = 5) -> pd.DataFrame | None:
-    """行业主力净流入（东财板块资金日线，接口可用时）。"""
+    """行业主力净流入（东财板块资金日线）：直连 → 外部浏览器。东财只提供约 120 个交易日，故无“近1年”。"""
+    path = CACHE / f"sflow_{data._today()}.csv"
+    f = None
+    if path.exists() and data._final_today(path):
+        f = pd.read_csv(path, index_col=0, parse_dates=True)
+    else:
+        try:
+            f = _sector_flow_browser()
+            if f is not None:
+                f.to_csv(path)
+        except Exception:
+            f = None
+    if f is not None:
+        return _flow_table(f, top)
     from . import eastmoney as em
     try:
         b = data.industry_boards()
@@ -270,13 +306,16 @@ def sector_flow_windows(top: int = 5) -> pd.DataFrame | None:
         res = {k: v for k, v in ex.map(one, codes) if v is not None}
     if len(res) < len(codes) * 0.5:
         return None
-    f = pd.DataFrame(res).sort_index() / 1e8
+    return _flow_table(pd.DataFrame(res).sort_index() / 1e8, top)
+
+
+def _flow_table(f: pd.DataFrame, top: int) -> pd.DataFrame:
     rows = []
     for lab, n in [("今日", 1)] + WINDOWS:
         if len(f) < min(n, 20):
             continue
-        s = f.iloc[-n:].sum().sort_values(ascending=False)
-        rows.append({"区间": lab + ("" if len(f) >= n else f"(仅{len(f)}天)"),
-                     "净流入前列": "、".join(f"{k}({v:+.0f}亿)" for k, v in s.head(top).items()),
-                     "净流出前列": "、".join(f"{k}({v:+.0f}亿)" for k, v in s.tail(top)[::-1].items())})
+        s = f.iloc[-n:].sum(min_count=1).dropna().sort_values(ascending=False)
+        rows.append({"区间": lab + ("" if len(f) >= n else f"(东财仅提供{len(f)}天)"),
+                     "净流入前列": "、".join(f"{k}({v:+.1f}亿)" for k, v in s.head(top).items()),
+                     "净流出前列": "、".join(f"{k}({v:+.1f}亿)" for k, v in s.tail(top)[::-1].items())})
     return pd.DataFrame(rows)

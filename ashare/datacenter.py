@@ -138,7 +138,16 @@ def fund_flow(code: str, days: int = 10) -> pd.DataFrame:
     try:
         return _fund_flow_page(code, days)
     except Exception as e:
-        raise RuntimeError(f"接口失败({api_err!r:.60})；网页版也失败({e!r:.60})")
+        page_err = e
+    try:                                            # 第三层：外部浏览器（不同出口 IP）
+        from . import browser_fetch as bf
+        u = bf.fund_flow_url(em.secid_of(code), days)
+        j = bf.fetch_json([u])[u]
+        if isinstance(j, Exception):
+            raise j
+        return _parse_fflow(j, days)
+    except Exception as e:
+        raise RuntimeError(f"接口失败({api_err!r:.50})；网页版失败({page_err!r:.40})；外部浏览器失败({e!r:.40})")
 
 
 def _fund_flow_page(code: str, days: int = 10) -> pd.DataFrame:
