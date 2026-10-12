@@ -6,7 +6,7 @@ description: A股短线分析与回测技能。用户要求预测或判断今日
 # A股短线分析与回测
 
 ## 准备
-1. 获取代码：克隆 GitHub 仓库 `a-share-short-term`，或者解压技能附件 zip 到 `/data/a-share-short-term`。
+1. 获取代码：克隆 `https://github.com/omerorn001-sudo/a-share-short-term`，或者解压技能附件 zip 到 `/data/a-share-short-term`。
 2. 在 `/data/a-share-short-term` 中安装依赖：`pip3 install -q akshare pandas numpy PyYAML`。
 3. 所有命令都在该目录下运行：`python3 -m ashare.cli <命令>`。
 

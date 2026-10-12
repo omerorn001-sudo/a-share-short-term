@@ -19,7 +19,7 @@
 ## 安装
 
 ```bash
-git clone <本仓库地址> && cd a-share-short-term
+git clone https://github.com/omerorn001-sudo/a-share-short-term.git && cd a-share-short-term
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
