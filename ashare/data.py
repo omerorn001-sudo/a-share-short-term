@@ -34,9 +34,19 @@ def _retry(fn, tries=3, wait=1.5):
     raise last
 
 
-def _cached(name: str, fetch, max_age_hours: float | None = 12) -> pd.DataFrame:
+def _final_today(path: Path) -> bool:
+    """当天收盘后写入的行情缓存已是终值，当天内一直有效。"""
+    now = pd.Timestamp.now(tz="Asia/Shanghai")
+    close = now.normalize() + pd.Timedelta(hours=15, minutes=1)
+    mtime = pd.Timestamp(path.stat().st_mtime, unit="s", tz="UTC").tz_convert("Asia/Shanghai")
+    return now >= close and mtime >= close
+
+
+def _cached(name: str, fetch, max_age_hours: float | None = 12, final_after_close: bool = False) -> pd.DataFrame:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"{name}.csv"
+    if path.exists() and final_after_close and _final_today(path):
+        return pd.read_csv(path, dtype={"code": str})
     if path.exists() and (max_age_hours is None or (time.time() - path.stat().st_mtime < max_age_hours * 3600
                                                     and not _intraday_stale(path))):
         return pd.read_csv(path, dtype={"code": str})
@@ -106,7 +116,7 @@ def stock_hist(code: str, start: str, end: str, adjust: str = "qfq", cache: bool
 
     if not cache:
         return fetch()
-    df = _cached(f"hist_{code}_{start}_{end}_{adjust}", fetch, max_age_hours=None if end < _today() else 6)
+    df = _cached(f"hist_{code}_{start}_{end}_{adjust}", fetch, max_age_hours=None if end < _today() else 6, final_after_close=True)
     df["date"] = pd.to_datetime(df["date"])
     return df
 
@@ -136,12 +146,31 @@ def index_hist(symbol: str = "sh000001") -> pd.DataFrame:
             return _retry(lambda: ak.stock_zh_index_daily_em(symbol=symbol), tries=2)
         except Exception:
             return _retry(lambda: ak.stock_zh_index_daily(symbol=symbol))
-    df = _cached(f"index_{symbol}", fetch, max_age_hours=6)
+    df = _cached(f"index_{symbol}", fetch, max_age_hours=6, final_after_close=True)
     if "amount" not in df:                      # 旧缓存来自新浪源，没有成交额
         (CACHE_DIR / f"index_{symbol}.csv").unlink(missing_ok=True)
         df = _cached(f"index_{symbol}", fetch, max_age_hours=6)
     df["date"] = pd.to_datetime(df["date"])
-    return df.sort_values("date").reset_index(drop=True)
+    df = _patch_today(df.sort_values("date").reset_index(drop=True), symbol)
+    return df
+
+
+def _patch_today(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """备用源日线可能缺当天（如东财 K 线停在上一交易日），用腾讯实时快照补上当天这一根。"""
+    try:
+        from . import tencent
+        q = tencent.quotes([symbol])
+        if q.empty:
+            return df
+        q = q.iloc[0]
+        d = pd.Timestamp(str(q["time"])[:8])
+        if len(df) and d > df["date"].iloc[-1] and q["price"]:
+            row = {"date": d, "open": q["open"], "high": q["high"], "low": q["low"], "close": q["price"],
+                   "volume": q["volume"], "amount": q["amount"], "pct_chg": q["pct_chg"]}
+            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    except Exception:
+        pass
+    return df
 
 
 def spot() -> pd.DataFrame:
@@ -169,7 +198,7 @@ def spot() -> pd.DataFrame:
                                      "成交额": "amount", "昨收": "prev_close", "今开": "open"})
             df["code"] = df["code"].str[-6:]
             return df
-    df = _cached(f"spot_{_today()}", fetch, max_age_hours=0.25)
+    df = _cached(f"spot_{_today()}", fetch, max_age_hours=0.25, final_after_close=True)
     df["code"] = df["code"].astype(str).str.zfill(6)
     return df
 
@@ -223,7 +252,7 @@ def industry_boards() -> pd.DataFrame:
             return df.rename(columns={"板块": "board", "涨跌幅": "pct_chg", "上涨家数": "up", "下跌家数": "down",
                                       "领涨股": "leader", "净流入": "net_inflow"}).assign(
                 net_inflow=lambda d: pd.to_numeric(d["net_inflow"], errors="coerce") * 1e8)  # 同花顺单位为亿
-    return _cached(f"boards_{_today()}", fetch, max_age_hours=0.25)
+    return _cached(f"boards_{_today()}", fetch, max_age_hours=0.25, final_after_close=True)
 
 
 def _today() -> str:

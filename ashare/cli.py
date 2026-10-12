@@ -61,7 +61,7 @@ def cmd_market(a, cfg):
         from .market import market_report
         _print(market_report(cfg, a.date)); return
     from .analysis import market_analysis, render_market
-    text = render_market(market_analysis(cfg))
+    text = render_market(market_analysis({**cfg, '_history': not a.no_history}))
     print(text)
     print("\n已保存:", _save_md(text, f"market_{_today()}"))
 
@@ -69,7 +69,7 @@ def cmd_market(a, cfg):
 def cmd_analyze(a, cfg):
     """个股多维度深度分析：代码 或 代码:成本价。"""
     from .analysis import market_analysis, render_market, stock_analysis, render_stock
-    mkt = None if a.no_market else market_analysis(cfg)
+    mkt = None if a.no_market else market_analysis({**cfg, '_history': False})
     parts = [render_market(mkt)] if mkt else []
     for item in a.codes:
         code, _, cost = item.partition(":")
@@ -92,7 +92,7 @@ def cmd_screen(a, cfg):
     print("已保存:", _save(df, f"screen_{a.date or _today()}"))
     if a.deep and not df.empty:
         from .analysis import market_analysis, render_market, stock_analysis, render_stock
-        mkt = market_analysis(cfg)
+        mkt = market_analysis({**cfg, '_history': True})
         parts = [render_market(mkt)]
         for code in df.head(a.deep)["代码"]:
             parts.append(render_stock(stock_analysis(code, cfg, None, mkt)))
@@ -187,6 +187,7 @@ def main(argv=None):
 
     s = sub.add_parser("market", help="大盘多维度研判（指数/量能/情绪/融资/龙虎榜/调研/板块）")
     s.add_argument("--date"); s.add_argument("--simple", action="store_true", help="只输出旧版简要评分")
+    s.add_argument("--no-history", action="store_true", help="不做 20日/3月/6月/1年 多周期对比（首次全市场统计约 3–5 分钟）")
     s = sub.add_parser("analyze", help="个股多维度深度分析，输出买卖结论与理由")
     s.add_argument("codes", nargs="+", help="代码 或 代码:成本价"); s.add_argument("--no-market", action="store_true")
     s = sub.add_parser("boards", help="行业板块强度排名"); s.add_argument("--top", type=int, default=10)

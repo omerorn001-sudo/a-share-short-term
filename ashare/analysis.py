@@ -185,7 +185,85 @@ def market_analysis(cfg: dict) -> dict:
     total = sum(d.score for d in dims)
     valid = [d for d in dims if d.status != NA]
     pos = "5-8成" if total >= 4 else "3-5成" if total >= 1 else "1-3成" if total >= -2 else "0-1成（空仓观望）"
-    return {"dims": dims, "total": total, "position": pos, "intraday": intraday, "valid": len(valid)}
+    periods = None
+    if cfg.get("_history", True):
+        periods, perr = _safe(multi_period)
+        if periods is None:
+            periods = {"error": perr}
+        else:
+            _enrich_dims(dims, periods)
+    return {"dims": dims, "total": total, "position": pos, "intraday": intraday, "valid": len(valid), "periods": periods}
+
+
+def multi_period() -> dict:
+    """情绪 / 融资 / 板块 / 指数 / 成交额 的 20日、3个月、6个月、1年 对比表。"""
+    from . import history as h
+    out = {}
+    out["indexes"], _ = _safe(h.index_windows)
+    out["amount"], _ = _safe(h.amount_windows)
+    m, err = _safe(h.margin_windows)
+    out["margin"], out["margin_meta"] = (m if m is not None else (None, {"error": err}))
+    mat, err = _safe(h.stock_matrix)
+    if mat is not None:
+        pct, hp, names = mat
+        sent = h.sentiment_history(pct, hp, names)
+        out["sentiment_daily"] = sent
+        out["sentiment"] = h.window_table(sent, ["涨停", "跌停", "炸板", "炸板率%", "最高连板", "上涨占比%", "涨停次日溢价%"])
+        sec, _ = _safe(h.sector_windows, pct)
+        out["sectors"], out["sector_types"] = sec if sec is not None else (None, None)
+    else:
+        out["matrix_error"] = err
+    out["sector_flow"], _ = _safe(h.sector_flow_windows)
+    return out
+
+
+def _enrich_dims(dims: list, p: dict) -> None:
+    """把多周期位置补进各维度依据，便于一句话看出“今天在历史上算高还是低”。"""
+    by = {d.name: d for d in dims}
+    ix = p.get("indexes")
+    if ix is not None and "指数趋势" in by and "今日%" in ix:
+        by["指数趋势"].detail += " 其他指数：" + "；".join(
+            f"{r['指数']} {r['收盘']}（{r['今日%']:+.2f}%，近20日 {r['近20日%']:+.1f}%，站上 {r['站上均线']}）"
+            for _, r in ix.iterrows() if r["指数"] != "上证指数" and isinstance(r.get("今日%"), (int, float)))
+    st = p.get("sentiment")
+    if st is not None and "涨跌停情绪" in by:
+        z = st.set_index("指标")
+        by["涨跌停情绪"].detail += (f" 自算口径：涨停 {z.loc['涨停','今日']:.0f}（20日均 {z.loc['涨停','近20日均值']}，1年均 {z.loc['涨停','近1年均值']}，"
+                                 f"1年分位 {z.loc['涨停','近1年分位']}），炸板率 {z.loc['炸板率%','今日']}%（20日均 {z.loc['炸板率%','近20日均值']}%），"
+                                 f"昨日涨停今日平均 {z.loc['涨停次日溢价%','今日']:+.2f}%。")
+    mg, meta = p.get("margin"), p.get("margin_meta") or {}
+    if mg is not None and "融资余额（杠杆资金）" in by:
+        by["融资余额（杠杆资金）"].detail += " " + "；".join(f"{r['区间']} {r['变化(亿)']:+.0f}亿（{r['变化%']:+.2f}%）" for _, r in mg.iterrows()) + \
+            (f"；余额处于近1年 {meta['pctl']:.0f}% 分位。" if "pctl" in meta else "")
+
+
+def _md(df) -> str:
+    if df is None or len(df) == 0:
+        return "（无数据）"
+    cols = list(df.columns)
+    fmt = lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v)) else (f"{v:,.2f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v))
+    return "\n".join(["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)] +
+                     ["| " + " | ".join(fmt(v) for v in row) + " |" for row in df.itertuples(index=False)])
+
+
+def render_periods(p: dict | None) -> str:
+    if not p:
+        return ""
+    if "error" in p:
+        return f"\n\n## 多周期对比\n\n多周期数据获取失败：{p['error']}"
+    out = ["\n\n## 多周期对比（20日 / 3个月 / 6个月 / 1年）"]
+    out += ["\n### 指数（区间涨跌幅）", _md(p.get("indexes"))]
+    out += ["\n### 两市成交额", _md(p.get("amount"))]
+    out += ["\n### 情绪（全市场日K自算：涨停≥涨幅限制的98.5%，炸板=盘中触及未封住）", _md(p.get("sentiment"))]
+    if p.get("matrix_error"):
+        out.append(f"情绪历史获取失败：{p['matrix_error']}")
+    meta = p.get("margin_meta") or {}
+    out += [f"\n### 融资余额（截至 {pd.Timestamp(meta['date']).date() if 'date' in meta else '—'}，T+1）", _md(p.get("margin"))]
+    if "pctl" in meta:
+        out.append(f"\n当前余额 {meta['balance']:.0f} 亿，处于近1年 {meta['pctl']:.0f}% 分位。")
+    out += ["\n### 行业涨跌（东财行业，成分股等权）", _md(p.get("sectors")), "", _md(p.get("sector_types"))]
+    out += ["\n### 行业主力净流入（东财板块资金）", _md(p.get("sector_flow")) if p.get("sector_flow") is not None else "东财板块资金接口不可用，本次缺失。"]
+    return "\n".join(out)
 
 
 # ======================= 个股 =======================
@@ -405,7 +483,7 @@ def render_market(r: dict) -> str:
     head = f"## 大盘综合研判\n\n**综合得分 {r['total']:+d}，建议仓位 {r['position']}**"
     if r["intraday"]:
         head += "（盘中运行：成交量、涨停数据未走完；两融与龙虎榜为上一交易日）"
-    return head + "\n\n" + _dims_table(r["dims"])
+    return head + "\n\n" + _dims_table(r["dims"]) + render_periods(r.get("periods"))
 
 
 def render_stock(r: dict) -> str:

@@ -130,16 +130,66 @@ def stock_profile(code: str) -> dict:
 
 
 def fund_flow(code: str, days: int = 10) -> pd.DataFrame:
-    """个股日度主力资金净流入（元）。main=主力，xl=超大单，l=大单。"""
-    j = em._get("/api/qt/stock/fflow/daykline/get", {
-        "secid": em.secid_of(code), "lmt": days, "klt": 101,
-        "fields1": "f1,f2,f3,f7", "fields2": "f51,f52,f53,f54,f55,f56,f57"}, hosts=em.HIS_HOSTS + em.HOSTS, tries=5)
-    rows = [k.split(",") for k in ((j.get("data") or {}).get("klines") or [])]
+    """个股日度主力资金净流入（元）。接口直连 → 网页版爬虫（无头浏览器打开资金流向页，截获页面自身请求）。"""
+    try:
+        return _fund_flow_api(code, days)
+    except Exception as e:
+        api_err = e
+    try:
+        return _fund_flow_page(code, days)
+    except Exception as e:
+        raise RuntimeError(f"接口失败({api_err!r:.60})；网页版也失败({e!r:.60})")
+
+
+def _fund_flow_page(code: str, days: int = 10) -> pd.DataFrame:
+    import json
+    import re
+    from playwright.sync_api import sync_playwright
+    code = str(code).zfill(6)
+    got = {}
+    with sync_playwright() as p:
+        import shutil
+        exe = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+        br = p.chromium.launch(headless=True, args=["--no-sandbox"], executable_path=exe)
+        pg = br.new_page(user_agent=em.HEADERS["User-Agent"])
+
+        def on_resp(r):
+            if "fflow/daykline" in r.url and "body" not in got:
+                try:
+                    got["body"] = r.text()
+                except Exception:
+                    pass
+        pg.on("response", on_resp)
+        pg.goto(f"https://data.eastmoney.com/zjlx/{code}.html", wait_until="domcontentloaded", timeout=30000)
+        for _ in range(30):
+            if "body" in got:
+                break
+            pg.wait_for_timeout(500)
+        br.close()
+    if "body" not in got:
+        raise RuntimeError("网页未返回资金流数据")
+    txt = got["body"]
+    txt = txt[txt.find("{"): txt.rfind("}") + 1]
+    j = json.loads(txt)
+    return _parse_fflow(j, days)
+
+
+def _parse_fflow(j: dict, days: int) -> pd.DataFrame:
+    rows = [k.split(",")[:7] for k in ((j.get("data") or {}).get("klines") or [])][-days:]
     df = pd.DataFrame(rows, columns=["date", "main", "small", "mid", "l", "xl", "_"])
     for c in ["main", "small", "mid", "l", "xl"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df["date"] = pd.to_datetime(df["date"])
+    if df.empty:
+        raise RuntimeError("资金流为空")
     return df.drop(columns="_")
+
+
+def _fund_flow_api(code: str, days: int = 10) -> pd.DataFrame:
+    j = em._get("/api/qt/stock/fflow/daykline/get", {
+        "secid": em.secid_of(code), "lmt": days, "klt": 101,
+        "fields1": "f1,f2,f3,f7", "fields2": "f51,f52,f53,f54,f55,f56,f57"}, hosts=em.HIS_HOSTS + em.HOSTS, tries=5)
+    return _parse_fflow(j, days)
 
 
 def industry_map() -> pd.DataFrame:
