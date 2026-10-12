@@ -56,7 +56,10 @@ def tech_one(code: str, cfg: dict, end: str) -> dict | None:
             "技术满足": int(sum(c.values())), "趋势分": trend, "预警": "、".join(flags),
             "预警分": -min(2, len(flags)) if flags else 1, "买点分": 2 if all(c.values()) else (-1 if x["bias5"] > 0.10 else 0),
             "近20日%": float(cl.iloc[-1] / cl.iloc[-21] - 1) if len(cl) > 21 else None,
-            "近60日%": float(cl.iloc[-1] / cl.iloc[-61] - 1) if len(cl) > 61 else None}
+            "近60日%": float(cl.iloc[-1] / cl.iloc[-61] - 1) if len(cl) > 61 else None,
+            # 低吸 v4 因子（见 research/optimize_2026_08_09）
+            "量能趋势": float(d["volume"].iloc[-5:].mean() / d["volume"].iloc[-25:-5].mean()) if len(d) > 25 else None,
+            "20日波动": float(cl.pct_change().iloc[-20:].std())}
 
 
 def finance_latest(codes: list[str]) -> pd.DataFrame:
@@ -166,3 +169,18 @@ def conclude(df: pd.DataFrame, nb: int, mkt_total: int | None) -> pd.DataFrame:
     order = {"买入": 0, "信号成立·大盘偏弱观察": 1, "技术触发·资金不支持": 2, "重点观察": 3, "观察": 4, "回避": 5}
     res["_o"] = res["结论"].map(order)
     return res.sort_values(["_o", "总分", "amount"], ascending=[True, False, False]).drop(columns="_o").reset_index(drop=True)
+
+
+# ---------------- 低吸 v4：选 10 只、只买第 1 只 ----------------
+# 两个月（2026-08、2026-09）回测：原 7 条件“追突破/放量”排名与收益负相关；
+# 稳定有效的是均值回归方向：近 20 日涨幅低、量能未放大、换手低、波动高。
+V4_FACTORS = [("近20日%", -1), ("量能趋势", -1), ("turnover", -1), ("20日波动", +1)]
+
+
+def rank_v4(df: pd.DataFrame, top: int = 10) -> pd.DataFrame:
+    """初筛池内按 4 因子截面百分位等权打分，返回前 top 只（第 1 只为买入标的，其余为开盘不合格时的替补）。"""
+    d = df.copy()
+    d["低吸分"] = sum(d[f].rank(pct=True) * s for f, s in V4_FACTORS)
+    d = d.sort_values("低吸分", ascending=False).reset_index(drop=True)
+    d["买入顺位"] = range(1, len(d) + 1)
+    return d.head(top)

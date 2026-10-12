@@ -118,6 +118,20 @@ def cmd_scan(a, cfg):
     print("已保存:", _save(df, f"scan_{a.date or _today()}"))
 
 
+def cmd_pick(a, cfg):
+    """低吸 v4：初筛池按 4 因子排序选 10 只，次日只买第 1 只（一字涨停/停牌买不到则顺延下一只），持有至 T+3 收盘。"""
+    from .batch import run, rank_v4
+    df, meta = run(cfg, a.date, None)
+    for k, v in meta["funnel"]:
+        print(f"{k}: {v}")
+    top = rank_v4(df, a.top)
+    cols = ["买入顺位", "code", "name", "close", "pct_chg", "近20日%", "量能趋势", "turnover", "20日波动", "低吸分", "预警"]
+    _print(top[[c for c in cols if c in top]])
+    print("规则：T+1 开盘买第 1 只（买不到则顺延下一只）；只持 1 只，T+3 收盘卖出（信号日为 T），卖出当日收盘再选下一只。")
+    print("已保存:", _save(top, f"pick_v4_{a.date or _today()}"))
+    print("> 仅供研究，不构成投资建议。")
+
+
 def cmd_check(a, cfg):
     """持仓体检：code:成本价 ..."""
     end = a.date or _today()
@@ -212,6 +226,8 @@ def main(argv=None):
     s.add_argument("--deep", type=int, default=0, help="对排名前 N 只做多维度深度分析")
     s = sub.add_parser("scan", help="初筛通过的全部股票全量分析（含资金面买入条件）")
     s.add_argument("--date"); s.add_argument("--top", type=int, default=40); s.add_argument("--no-market", action="store_true")
+    s = sub.add_parser("pick", help="低吸 v4：选 10 只、次日只买第 1 只（2026-08/09 回测优化版）")
+    s.add_argument("--date"); s.add_argument("--top", type=int, default=10)
     s = sub.add_parser("check", help="持仓卖点体检"); s.add_argument("holdings", nargs="+", help="代码:成本价"); s.add_argument("--date")
     for name, h in [("backtest", "策略回测"), ("study", "信号事件研究"), ("sweep", "参数网格回测")]:
         s = sub.add_parser(name, help=h)
