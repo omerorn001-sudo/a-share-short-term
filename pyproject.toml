@@ -1,0 +1,10 @@
+[project]
+name = "a-share-short-term"
+version = "0.1.0"
+description = "A股短线选股、择时与回测系统"
+requires-python = ">=3.9"
+dependencies = ["akshare>=1.14", "pandas>=2.0", "numpy>=1.24", "PyYAML>=6.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
