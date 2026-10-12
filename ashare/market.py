@@ -33,6 +33,10 @@ def score_environment(idx: pd.DataFrame, zt: int | None, dt: int | None, zb: int
         if break_rate < 0.25: score += 15
         elif break_rate >= m["high_break_rate"]: notes.append(f"炸板率{break_rate:.0%}，追高风险大")
         else: score += 7
+    now = pd.Timestamp.now(tz="Asia/Shanghai")
+    intraday = pd.Timestamp(last["date"]).date() == now.date() and now.hour < 15
+    if intraday:
+        notes.insert(0, "盘中数据：成交量未走完，量能和涨停数会偏低，收盘后再看更准")
     score = max(0, min(100, score))
     position = "5-8成" if score >= 70 else "3-5成" if score >= 50 else "0-3成"
     return {"日期": str(pd.Timestamp(last["date"]).date()), "收盘": round(float(last["close"]), 2),

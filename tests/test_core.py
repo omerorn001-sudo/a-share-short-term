@@ -69,3 +69,8 @@ def test_market_score_range():
     idx = make_df(list(3000 + np.arange(30) * 5))
     r = score_environment(idx, zt=80, dt=2, zb=10, cfg=CFG)
     assert 70 <= r["评分"] <= 100 and r["建议仓位"] == "5-8成"
+
+
+def test_config_numbers_are_numeric():
+    for k, v in CFG["screen"].items():
+        assert isinstance(v, (int, float, bool)), k

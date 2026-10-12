@@ -7,13 +7,13 @@ market:
   cold_limit_down: 20     # 跌停家数 ≥ 此值视为情绪偏冷
   high_break_rate: 0.35   # 炸板率 ≥ 此值视为情绪退潮
 screen:
-  min_float_mv: 3.0e9     # 流通市值下限（元）
-  max_float_mv: 3.0e10    # 流通市值上限（元）
+  min_float_mv: 3000000000     # 流通市值下限（元）
+  max_float_mv: 30000000000    # 流通市值上限（元）
   min_turnover: 5         # 换手率 %
   max_turnover: 20
   min_volume_ratio: 1.5
   max_volume_ratio: 5
-  min_amount: 2.0e8       # 成交额下限（元）
+  min_amount: 200000000       # 成交额下限（元）
   exclude_st: true
   exclude_bj: true        # 排除北交所
   top_n: 30               # 进入技术面复核的候选数量

@@ -65,6 +65,14 @@ def stock_hist(code: str, start: str, end: str, adjust: str = "qfq", cache: bool
     code = str(code).zfill(6)
 
     def fetch():
+        from . import eastmoney
+        try:
+            fq = {"qfq": 1, "hfq": 2, "": 0}.get(adjust, 1)
+            df = eastmoney.kline(eastmoney.secid_of(code), beg=start, end=end, fqt=fq)
+            if len(df):
+                return df[["date", "open", "high", "low", "close", "volume", "amount", "turnover", "pct_chg"]]
+        except Exception:
+            pass
         ak = _ak()
         try:
             raw = _retry(lambda: ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start,
@@ -88,10 +96,14 @@ def stock_hist(code: str, start: str, end: str, adjust: str = "qfq", cache: bool
 def index_hist(symbol: str = "sh000001") -> pd.DataFrame:
     """指数日线，含成交额（元）。"""
     def fetch():
+        from . import eastmoney
+        try:
+            return eastmoney.kline(eastmoney.secid_of(symbol, is_index=True), fqt=0)
+        except Exception:
+            pass
         ak = _ak()
         try:
-            raw = _retry(lambda: ak.stock_zh_index_daily_em(symbol=symbol), tries=2)
-            return raw.rename(columns={"date": "date"})
+            return _retry(lambda: ak.stock_zh_index_daily_em(symbol=symbol), tries=2)
         except Exception:
             return _retry(lambda: ak.stock_zh_index_daily(symbol=symbol))
     df = _cached(f"index_{symbol}", fetch, max_age_hours=6)
@@ -100,8 +112,13 @@ def index_hist(symbol: str = "sh000001") -> pd.DataFrame:
 
 
 def spot() -> pd.DataFrame:
-    """全市场实时快照。东方财富优先，失败回退新浪（较慢，无量比和市值）。"""
+    """全市场实时快照。东财网页接口直连爬虫 → AKShare 东财 → 新浪（无量比和市值）。"""
     def fetch():
+        from . import eastmoney
+        try:
+            return eastmoney.spot()
+        except Exception as e:
+            print(f"[提示] 东财直连失败，改用 AKShare: {e!r}"[:150])
         ak = _ak()
         try:
             return _retry(lambda: ak.stock_zh_a_spot_em(), tries=2).rename(columns=_SPOT_COLS)
@@ -135,8 +152,13 @@ def dragon_tiger(date: str) -> pd.DataFrame:
 
 
 def industry_boards() -> pd.DataFrame:
-    """行业板块强度。东方财富优先，失败回退同花顺。"""
+    """行业板块强度（含主力净流入）。东财直连 → AKShare 东财 → 同花顺。"""
     def fetch():
+        from . import eastmoney
+        try:
+            return eastmoney.boards("industry")
+        except Exception:
+            pass
         ak = _ak()
         try:
             df = _retry(lambda: ak.stock_board_industry_name_em(), tries=2)
