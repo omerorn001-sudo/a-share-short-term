@@ -1,0 +1,39 @@
+# 短线系统参数（经验值，请用回测校准）
+market:
+  index: sh000001
+  ma_short: 5
+  ma_long: 20
+  hot_limit_up: 60        # 涨停家数 ≥ 此值视为情绪偏热
+  cold_limit_down: 20     # 跌停家数 ≥ 此值视为情绪偏冷
+  high_break_rate: 0.35   # 炸板率 ≥ 此值视为情绪退潮
+screen:
+  min_float_mv: 3.0e9     # 流通市值下限（元）
+  max_float_mv: 3.0e10    # 流通市值上限（元）
+  min_turnover: 5         # 换手率 %
+  max_turnover: 20
+  min_volume_ratio: 1.5
+  max_volume_ratio: 5
+  min_amount: 2.0e8       # 成交额下限（元）
+  exclude_st: true
+  exclude_bj: true        # 排除北交所
+  top_n: 30               # 进入技术面复核的候选数量
+strategy:
+  breakout_window: 20     # 平台突破：收盘价创 N 日新高
+  vol_mult: 1.5           # 放量：成交量 ≥ 5 日均量 × 倍数
+  require_ma_bull: true   # 要求 MA5 > MA10 > MA20
+  max_ma5_bias: 0.07      # 收盘偏离 MA5 超过此值不追
+exit:
+  stop_loss: 0.07         # 硬止损
+  trailing_stop: 0.08     # 从持仓最高收盘回撤
+  exit_below_ma: 5        # 收盘跌破 MA5 次日卖出；0 关闭
+  time_stop_days: 3       # N 天未盈利离场；0 关闭
+  max_hold_days: 10
+  take_profit_1: 0.10     # 第一档止盈（卖 1/3）
+  take_profit_2: 0.20     # 第二档止盈（再卖 1/3）
+cost:
+  commission: 0.00025     # 双边佣金
+  stamp_tax: 0.0005       # 卖出印花税
+  slippage: 0.001         # 单边滑点
+backtest:
+  max_positions: 5
+  init_cash: 1000000
