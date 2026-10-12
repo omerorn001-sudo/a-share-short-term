@@ -49,9 +49,35 @@ def _load_hist(codes, start, end, verbose=True):
     return out
 
 
+def _save_md(text: str, name: str) -> Path:
+    REPORT_DIR.mkdir(exist_ok=True)
+    p = REPORT_DIR / f"{name}.md"
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
 def cmd_market(a, cfg):
-    from .market import market_report
-    _print(market_report(cfg, a.date))
+    if a.simple:
+        from .market import market_report
+        _print(market_report(cfg, a.date)); return
+    from .analysis import market_analysis, render_market
+    text = render_market(market_analysis(cfg))
+    print(text)
+    print("\n已保存:", _save_md(text, f"market_{_today()}"))
+
+
+def cmd_analyze(a, cfg):
+    """个股多维度深度分析：代码 或 代码:成本价。"""
+    from .analysis import market_analysis, render_market, stock_analysis, render_stock
+    mkt = None if a.no_market else market_analysis(cfg)
+    parts = [render_market(mkt)] if mkt else []
+    for item in a.codes:
+        code, _, cost = item.partition(":")
+        r = stock_analysis(code, cfg, float(cost) if cost else None, mkt)
+        parts.append(render_stock(r))
+    text = "\n\n".join(parts) + "\n\n> 仅供研究，不构成投资建议。"
+    print(text)
+    print("\n已保存:", _save_md(text, f"analysis_{_today()}_{'_'.join(c.split(':')[0] for c in a.codes)}"))
 
 
 def cmd_boards(a, cfg):
@@ -64,6 +90,15 @@ def cmd_screen(a, cfg):
     df = screen(cfg, a.date)
     _print(df.head(a.top))
     print("已保存:", _save(df, f"screen_{a.date or _today()}"))
+    if a.deep and not df.empty:
+        from .analysis import market_analysis, render_market, stock_analysis, render_stock
+        mkt = market_analysis(cfg)
+        parts = [render_market(mkt)]
+        for code in df.head(a.deep)["代码"]:
+            parts.append(render_stock(stock_analysis(code, cfg, None, mkt)))
+        text = "\n\n".join(parts) + "\n\n> 仅供研究，不构成投资建议。"
+        print(text)
+        print("\n已保存:", _save_md(text, f"screen_deep_{a.date or _today()}"))
 
 
 def cmd_check(a, cfg):
@@ -150,9 +185,13 @@ def main(argv=None):
     p.add_argument("--config", default=None, help="配置文件路径，默认 config.yaml")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("market", help="大环境评分与建议仓位"); s.add_argument("--date")
+    s = sub.add_parser("market", help="大盘多维度研判（指数/量能/情绪/融资/龙虎榜/调研/板块）")
+    s.add_argument("--date"); s.add_argument("--simple", action="store_true", help="只输出旧版简要评分")
+    s = sub.add_parser("analyze", help="个股多维度深度分析，输出买卖结论与理由")
+    s.add_argument("codes", nargs="+", help="代码 或 代码:成本价"); s.add_argument("--no-market", action="store_true")
     s = sub.add_parser("boards", help="行业板块强度排名"); s.add_argument("--top", type=int, default=10)
     s = sub.add_parser("screen", help="全市场短线选股"); s.add_argument("--date"); s.add_argument("--top", type=int, default=20)
+    s.add_argument("--deep", type=int, default=0, help="对排名前 N 只做多维度深度分析")
     s = sub.add_parser("check", help="持仓卖点体检"); s.add_argument("holdings", nargs="+", help="代码:成本价"); s.add_argument("--date")
     for name, h in [("backtest", "策略回测"), ("study", "信号事件研究"), ("sweep", "参数网格回测")]:
         s = sub.add_parser(name, help=h)

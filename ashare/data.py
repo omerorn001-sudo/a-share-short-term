@@ -107,6 +107,9 @@ def index_hist(symbol: str = "sh000001") -> pd.DataFrame:
         except Exception:
             return _retry(lambda: ak.stock_zh_index_daily(symbol=symbol))
     df = _cached(f"index_{symbol}", fetch, max_age_hours=6)
+    if "amount" not in df:                      # 旧缓存来自新浪源，没有成交额
+        (CACHE_DIR / f"index_{symbol}.csv").unlink(missing_ok=True)
+        df = _cached(f"index_{symbol}", fetch, max_age_hours=6)
     df["date"] = pd.to_datetime(df["date"])
     return df.sort_values("date").reset_index(drop=True)
 
@@ -133,17 +136,30 @@ def spot() -> pd.DataFrame:
     return df
 
 
+def _pool(kind: str, date: str, ak_fn: str) -> pd.DataFrame:
+    def fetch():
+        from . import eastmoney
+        try:
+            return eastmoney.limit_pool(kind, date)
+        except Exception:
+            return _retry(lambda: getattr(_ak(), ak_fn)(date=date))
+    df = _cached(f"{kind}_{date}", fetch, None if date < _today() else 0.25)
+    if "代码" in df:
+        df["代码"] = df["代码"].astype(str).str.zfill(6)
+    return df
+
+
 def limit_up_pool(date: str) -> pd.DataFrame:
-    return _cached(f"zt_{date}", lambda: _retry(lambda: _ak().stock_zt_pool_em(date=date)), None if date < _today() else 0.25)
+    return _pool("zt", date, "stock_zt_pool_em")
 
 
 def limit_down_pool(date: str) -> pd.DataFrame:
-    return _cached(f"dt_{date}", lambda: _retry(lambda: _ak().stock_zt_pool_dtgc_em(date=date)), None if date < _today() else 0.25)
+    return _pool("dt", date, "stock_zt_pool_dtgc_em")
 
 
 def broken_pool(date: str) -> pd.DataFrame:
     """炸板池。"""
-    return _cached(f"zb_{date}", lambda: _retry(lambda: _ak().stock_zt_pool_zbgc_em(date=date)), None if date < _today() else 0.25)
+    return _pool("zb", date, "stock_zt_pool_zbgc_em")
 
 
 def dragon_tiger(date: str) -> pd.DataFrame:

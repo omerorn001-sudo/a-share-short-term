@@ -35,7 +35,7 @@ _session = requests.Session()
 _session.headers.update(HEADERS)
 
 
-def _get(path: str, params: dict, hosts=HOSTS, tries: int = 10, timeout: float = 8) -> dict:
+def _get(path: str, params: dict, hosts=HOSTS, tries: int = 10, timeout: float = 8, require_data: bool = True) -> dict:
     """东财节点时好时坏（502/断开/空响应），按 节点×协议 轮换重试。"""
     targets = [(sch, h) for h in hosts for sch in ("https", "http")]
     random.shuffle(targets)
@@ -46,7 +46,7 @@ def _get(path: str, params: dict, hosts=HOSTS, tries: int = 10, timeout: float =
             r = _session.get(f"{sch}://{host}{path}", params=params, timeout=timeout)
             if r.status_code == 200 and r.text.lstrip().startswith("{"):
                 j = r.json()
-                if j.get("data") is not None:
+                if j.get("data") is not None or not require_data:
                     return j
             last = RuntimeError(f"{host} HTTP {r.status_code}")
         except Exception as e:
@@ -136,3 +136,28 @@ def secid_of(code: str, is_index: bool = False) -> str:
     if is_index:
         return ("1." if code.startswith("000") else "0.") + code
     return ("1." if code.startswith(("6", "9")) else "0.") + code
+
+
+# ---------- 涨停 / 跌停 / 炸板池（push2ex，与东财涨停板行情页同源） ----------
+_POOL = {"zt": ("getTopicZTPool", "wz.ztzt", "fbt:asc"),
+         "dt": ("getTopicDTPool", "wz.ztzt", "fund:asc"),
+         "zb": ("getTopicZBPool", "wz.ztzt", "fbt:asc")}
+
+
+def limit_pool(kind: str, date: str) -> pd.DataFrame:
+    """kind: zt 涨停 / dt 跌停 / zb 炸板。date: YYYYMMDD。列名与 AKShare 一致（代码、名称、连板数、所属行业…）。"""
+    path, dpt, sort = _POOL[kind]
+    j = _get(f"/{path}", {"ut": "7eea3edcaed734bea9cbfc24409ed989", "dpt": dpt, "Pageindex": 0,
+                          "pagesize": 10000, "sort": sort, "date": date},
+             hosts=["push2ex.eastmoney.com"], tries=8, require_data=False)
+    pool = ((j.get("data") or {}).get("pool")) or []
+    df = pd.DataFrame(pool)
+    if df.empty:
+        return pd.DataFrame(columns=["代码", "名称", "涨跌幅", "最新价", "成交额", "流通市值", "换手率", "连板数", "炸板次数", "所属行业"])
+    df = df.rename(columns={"c": "代码", "n": "名称", "zdp": "涨跌幅", "p": "最新价", "amount": "成交额", "ltsz": "流通市值",
+                            "hs": "换手率", "fund": "封板资金", "fbt": "首次封板时间", "lbt": "最后封板时间",
+                            "zbc": "炸板次数", "lbc": "连板数", "hybk": "所属行业"})
+    if "最新价" in df:
+        df["最新价"] = df["最新价"] / 1000
+    df["代码"] = df["代码"].astype(str).str.zfill(6)
+    return df
