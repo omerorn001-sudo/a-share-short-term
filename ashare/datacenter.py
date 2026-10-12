@@ -83,7 +83,8 @@ def lhb_seats(code: str, date) -> pd.DataFrame:
     sell = query("RPT_BILLBOARD_DAILYDETAILSSELL", filt=f, sort="SELL").assign(side="卖")
     df = pd.concat([buy, sell], ignore_index=True)
     if not df.empty:
-        df = df.drop_duplicates(subset=["OPERATEDEPT_NAME", "side"])
+        # 同名席位（多个“机构专用”）要保留；同一席位会同时出现在买/卖两张表、或因多个上榜原因重复，按 名称+买额+卖额 去重
+        df = df.drop_duplicates(subset=["OPERATEDEPT_NAME", "BUY", "SELL"])
     return df
 
 
@@ -95,7 +96,7 @@ def lhb_institution_net(date) -> pd.DataFrame:
     df = pd.concat([buy, sell], ignore_index=True)
     if df.empty:
         return df
-    df = df.drop_duplicates(subset=["SECURITY_CODE", "OPERATEDEPT_NAME", "TRADE_ID"])
+    df = df.drop_duplicates(subset=["SECURITY_CODE", "OPERATEDEPT_NAME", "BUY", "SELL"])
     return df[df["OPERATEDEPT_NAME"].astype(str).str.contains("机构专用")]
 
 

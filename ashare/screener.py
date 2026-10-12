@@ -59,3 +59,21 @@ def screen(cfg: dict, date: str | None = None) -> pd.DataFrame:
     out = out.merge(zt, left_on="代码", right_on="code", how="left").drop(columns="code")
     out["评分"] = out["突破信号"] * 40 + out["MA多头"] * 20 + out["连板数"].notna() * 20 + (out["偏离MA5"] < 0.07) * 20
     return out.sort_values(["评分", "成交额(亿)"], ascending=False).reset_index(drop=True)
+
+
+def signal_breakdown(code: str, cfg: dict, end: str) -> dict:
+    """逐条列出“放量平台突破”买入信号的 5 个条件是否满足，便于解释为什么没触发。"""
+    start = (pd.Timestamp(end) - pd.Timedelta(days=200)).strftime("%Y%m%d")
+    df = data.stock_hist(code, start, end)
+    s = cfg["strategy"]
+    d = prepare(df, cfg)
+    prior_high = d["high"].shift(1).rolling(s["breakout_window"]).max().iloc[-1]
+    x = d.iloc[-1]
+    conds = {
+        f"①收盘>前{s['breakout_window']}日最高": (x["close"] > prior_high, f"{x['close']:.2f} vs {prior_high:.2f}"),
+        f"②量≥5日均量×{s['vol_mult']}": (x["vol_ratio5"] >= s["vol_mult"], f"{x['vol_ratio5']:.2f}倍"),
+        "③收盘>MA5": (x["close"] > x["ma5"], f"MA5 {x['ma5']:.2f}"),
+        f"④偏离MA5≤{s['max_ma5_bias']:.0%}": (x["bias5"] <= s["max_ma5_bias"], f"{x['bias5']:.1%}"),
+        "⑤MA5>MA10>MA20": ((x["ma5"] > x["ma10"]) and (x["ma10"] > x["ma20"]), f"{x['ma5']:.2f}/{x['ma10']:.2f}/{x['ma20']:.2f}"),
+    }
+    return {k: ("✅ " if ok else "❌ ") + v for k, (ok, v) in conds.items()} | {"满足": sum(bool(ok) for ok, _ in conds.values())}

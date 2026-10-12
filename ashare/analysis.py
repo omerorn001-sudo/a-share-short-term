@@ -141,7 +141,13 @@ def market_analysis(cfg: dict) -> dict:
     lhb_day = None
     if mm is not None and len(mm):
         lhb_day = mm["date"].iloc[-1]
-    inst, err = _safe(lambda: _cached_df(f"lhb_inst_{lhb_day:%Y%m%d}", lambda: dc.lhb_institution_net(lhb_day), 24)) if lhb_day is not None else (None, "无日期")
+    # 龙虎榜当天 17–18 点后发布：优先用最新交易日，取不到再退回上一交易日（两融日期）
+    inst, err = None, "无日期"
+    for d in [x for x in ((sh["date"].iloc[-1] if sh is not None else None), lhb_day) if x is not None]:
+        inst, err = _safe(lambda: dc.lhb_institution_net(d))
+        if inst is not None and len(inst):
+            lhb_day = d
+            break
     if inst is not None and len(inst):
         inst["NET"] = pd.to_numeric(inst["NET"], errors="coerce")
         inst["SECURITY_CODE"] = inst["SECURITY_CODE"].astype(str).str.zfill(6)
@@ -363,7 +369,7 @@ def stock_analysis(code: str, cfg: dict, cost: float | None = None, market: dict
         parts = [f"近30个交易日上榜 {len(days_)} 次，最近 {last_day.date()}（{last.get('EXPLANATION', '')}），龙虎榜净买 {_yi(last.get('BILLBOARD_NET_AMT'))}。"]
         sc = 1 if (last.get("BILLBOARD_NET_AMT") or 0) > 0 else -1
         if seats is not None and len(seats):
-            seats = seats.drop_duplicates(subset=["OPERATEDEPT_NAME"])
+            seats = seats.drop_duplicates(subset=["OPERATEDEPT_NAME", "BUY", "SELL"])   # 保留多个同名“机构专用”席位
             seats["NET"] = pd.to_numeric(seats["NET"], errors="coerce")
             inst = seats[seats["OPERATEDEPT_NAME"].str.contains("机构专用")]["NET"].sum()
             north = seats[seats["OPERATEDEPT_NAME"].str.contains("股通专用")]["NET"].sum()
