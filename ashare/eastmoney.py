@@ -31,12 +31,17 @@ SPOT_FIELDS = {"f12": "code", "f14": "name", "f2": "price", "f3": "pct_chg", "f5
 BOARD_FIELDS = {"f12": "board_code", "f14": "board", "f3": "pct_chg", "f8": "turnover", "f62": "net_inflow",
                 "f104": "up", "f105": "down", "f128": "leader", "f136": "leader_pct", "f20": "total_mv"}
 
+_dead: dict = {}          # 熔断：某组节点整组失败后 10 分钟内只试 2 次，避免限流时每个请求都重试 10 次
+
 _session = requests.Session()
 _session.headers.update(HEADERS)
 
 
 def _get(path: str, params: dict, hosts=HOSTS, tries: int = 10, timeout: float = 8, require_data: bool = True) -> dict:
     """东财节点时好时坏（502/断开/空响应），按 节点×协议 轮换重试。"""
+    key = tuple(hosts)
+    if time.time() - _dead.get(key, 0) < 600:
+        tries = min(tries, 2)
     targets = [(sch, h) for h in hosts for sch in ("https", "http")]
     random.shuffle(targets)
     last = None
@@ -52,6 +57,7 @@ def _get(path: str, params: dict, hosts=HOSTS, tries: int = 10, timeout: float =
         except Exception as e:
             last = e
         time.sleep(0.3 * (i + 1) + random.random() * 0.3)
+    _dead[key] = time.time()
     raise last
 
 

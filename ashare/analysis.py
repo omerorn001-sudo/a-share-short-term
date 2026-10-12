@@ -102,6 +102,8 @@ def market_analysis(cfg: dict) -> dict:
         r = tot.iloc[-1] / tot.iloc[-21:-1].mean()
         sc = 1 if r >= 1.1 else -1 if r < 0.8 else 0
         note = "（盘中未走完，偏低属正常）" if intraday else ""
+        if "amount_estimated" in sh:
+            note += "（东财限流，改用腾讯：今日为实际成交额，历史按成交量折算，倍数等同量能倍数）"
         dims.append(Dim("两市成交额", BULL if sc > 0 else BEAR if sc < 0 else NEU,
                         f"{_amt(tot.iloc[-1])}，为前20日均值的 {r:.2f} 倍{note}。" +
                         ("放量，增量资金在场。" if sc > 0 else "缩量，资金观望。" if sc < 0 else "量能平稳。"), 0 if intraday else sc))
@@ -221,7 +223,7 @@ def stock_analysis(code: str, cfg: dict, cost: float | None = None, market: dict
         else:
             why = []
             if L["close"] <= hi20: why.append(f"未突破前20日高点 {hi20:.2f}（差 {hi20 / L['close'] - 1:.1%}）")
-            if vr < cfg["strategy"]["vol_mult"]: why.append(f"量能不足（{vr:.2f} 倍 < {cfg['strategy']['vol_mult']} 倍）")
+            if vr < cfg["strategy"]["vol_mult"]: why.append(f"量能不足（{int(vr * 100) / 100:.2f} 倍 < {cfg['strategy']['vol_mult']} 倍）")
             if bias > cfg["strategy"]["max_ma5_bias"]: why.append(f"偏离MA5 {bias:.1%}，过高不追")
             if not bull: why.append("均线未多头")
             txt, sc = "未触发买入信号：" + "；".join(why or ["条件未同时满足"]) + "。", -1 if bias > 0.1 else 0
@@ -357,9 +359,12 @@ def stock_analysis(code: str, cfg: dict, cost: float | None = None, market: dict
     plan = {}
     if tech:
         f = tech.facts
-        plan = {"突破触发价": round(f["hi20"], 2), "止损（-7%）": round(f["close"] * (1 - cfg["exit"]["stop_loss"]), 2),
+        # 买入参考价：持仓用成本；未突破用触发价；已在触发价上方用收盘价（避免止损高于触发价）
+        ref = cost or max(f["hi20"], f["close"])
+        plan = {"突破触发价": round(f["hi20"], 2), "止损（-7%，按买入参考价）": round(ref * (1 - cfg["exit"]["stop_loss"]), 2),
                 "MA5 防守位": round(f["ma5"], 2), "MA10 防守位": round(f["ma10"], 2),
-                "止盈1（+10%）": round(f["close"] * 1.10, 2), "止盈2（+20%）": round(f["close"] * 1.20, 2)}
+                "止盈1（+10%）": round(ref * 1.10, 2), "止盈2（+20%）": round(ref * 1.20, 2),
+                "买入参考价": round(ref, 2)}
     if cost:
         pnl = (tech.facts["close"] / cost - 1) if tech else None
         warn = next((x for x in dims if x.name == "卖出预警（技术）"), None)

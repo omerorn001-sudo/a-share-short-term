@@ -37,11 +37,20 @@ def _retry(fn, tries=3, wait=1.5):
 def _cached(name: str, fetch, max_age_hours: float | None = 12) -> pd.DataFrame:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"{name}.csv"
-    if path.exists() and (max_age_hours is None or time.time() - path.stat().st_mtime < max_age_hours * 3600):
+    if path.exists() and (max_age_hours is None or (time.time() - path.stat().st_mtime < max_age_hours * 3600
+                                                    and not _intraday_stale(path))):
         return pd.read_csv(path, dtype={"code": str})
     df = fetch()
     df.to_csv(path, index=False)
     return df
+
+
+def _intraday_stale(path: Path) -> bool:
+    """盘中写入的缓存在收盘后（15:00 起）一律视为过期，避免收盘复盘用到盘中数据。"""
+    now = pd.Timestamp.now(tz="Asia/Shanghai")
+    close = now.normalize() + pd.Timedelta(hours=15, minutes=1)
+    mtime = pd.Timestamp(path.stat().st_mtime, unit="s", tz="UTC").tz_convert("Asia/Shanghai")
+    return now >= close and mtime < close
 
 
 def _norm_hist(df: pd.DataFrame) -> pd.DataFrame:
@@ -73,6 +82,15 @@ def stock_hist(code: str, start: str, end: str, adjust: str = "qfq", cache: bool
                 return df[["date", "open", "high", "low", "close", "volume", "amount", "turnover", "pct_chg"]]
         except Exception:
             pass
+        try:                                     # 腾讯日 K（含当天），东财限流时的主力备用
+            from . import tencent
+            days = (pd.Timestamp(end) - pd.Timestamp(start)).days
+            df = tencent.kline(code, n=min(int(days * 0.75) + 30, 2000), fq=adjust or "qfq")
+            df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
+            if len(df):
+                return df.reset_index(drop=True)
+        except Exception:
+            pass
         ak = _ak()
         try:
             raw = _retry(lambda: ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start,
@@ -101,6 +119,18 @@ def index_hist(symbol: str = "sh000001") -> pd.DataFrame:
             return eastmoney.kline(eastmoney.secid_of(symbol, is_index=True), fqt=0)
         except Exception:
             pass
+        try:                                     # 腾讯：历史无成交额，按当天均价估算（只用于量能倍数）
+            from . import tencent
+            df = tencent.kline(symbol, n=640, fq="")
+            last = df.iloc[-1]
+            if pd.notna(last["amount"]) and last["volume"]:
+                px = last["amount"] / last["volume"]
+                df["amount"] = df["amount"].fillna(df["volume"] * px)
+                df["amount_estimated"] = True
+                df.loc[df.index[-1], "amount_estimated"] = False
+            return df
+        except Exception:
+            pass
         ak = _ak()
         try:
             return _retry(lambda: ak.stock_zh_index_daily_em(symbol=symbol), tries=2)
@@ -121,8 +151,16 @@ def spot() -> pd.DataFrame:
         try:
             return eastmoney.spot()
         except Exception as e:
-            print(f"[提示] 东财直连失败，改用 AKShare: {e!r}"[:150])
+            print(f"[提示] 东财直连失败，改用 新浪代码表+腾讯快照（含量比/市值）: {e!r}"[:150])
         ak = _ak()
+        try:
+            from . import tencent
+            codes = _retry(lambda: ak.stock_zh_a_spot())["代码"].astype(str).str[-6:].tolist()
+            df = tencent.quotes(codes)
+            if len(df) > len(codes) * 0.9:
+                return df.drop(columns=["time"])
+        except Exception as e:
+            print(f"[提示] 腾讯快照失败: {e!r}"[:120])
         try:
             return _retry(lambda: ak.stock_zh_a_spot_em(), tries=2).rename(columns=_SPOT_COLS)
         except Exception:
@@ -183,7 +221,8 @@ def industry_boards() -> pd.DataFrame:
         except Exception:
             df = _retry(lambda: ak.stock_board_industry_summary_ths())
             return df.rename(columns={"板块": "board", "涨跌幅": "pct_chg", "上涨家数": "up", "下跌家数": "down",
-                                      "领涨股": "leader", "净流入": "net_inflow"})
+                                      "领涨股": "leader", "净流入": "net_inflow"}).assign(
+                net_inflow=lambda d: pd.to_numeric(d["net_inflow"], errors="coerce") * 1e8)  # 同花顺单位为亿
     return _cached(f"boards_{_today()}", fetch, max_age_hours=0.25)
 
 
