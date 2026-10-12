@@ -101,6 +101,23 @@ def cmd_screen(a, cfg):
         print("\n已保存:", _save_md(text, f"screen_deep_{a.date or _today()}"))
 
 
+def cmd_scan(a, cfg):
+    """初筛通过的全部股票做全量分析（技术5条 + 资金2条 + 调研/板块/基本面），按结论和总分排序。"""
+    from .batch import run
+    mkt = None
+    if not a.no_market:
+        from .analysis import market_analysis
+        mkt = market_analysis({**cfg, '_history': False})["total"]
+    df, meta = run(cfg, a.date, mkt)
+    for k, v in meta["funnel"]:
+        print(f"{k}: {v}")
+    if meta["errors"]:
+        print("数据缺失:", meta["errors"])
+    cols = ["code", "name", "pct_chg", "float_mv", "total_mv", "技术满足", "⑥主力5日净流入", "资金分", "7条满足", "总分", "结论"]
+    _print(df[cols].head(a.top))
+    print("已保存:", _save(df, f"scan_{a.date or _today()}"))
+
+
 def cmd_check(a, cfg):
     """持仓体检：code:成本价 ..."""
     end = a.date or _today()
@@ -193,6 +210,8 @@ def main(argv=None):
     s = sub.add_parser("boards", help="行业板块强度排名"); s.add_argument("--top", type=int, default=10)
     s = sub.add_parser("screen", help="全市场短线选股"); s.add_argument("--date"); s.add_argument("--top", type=int, default=20)
     s.add_argument("--deep", type=int, default=0, help="对排名前 N 只做多维度深度分析")
+    s = sub.add_parser("scan", help="初筛通过的全部股票全量分析（含资金面买入条件）")
+    s.add_argument("--date"); s.add_argument("--top", type=int, default=40); s.add_argument("--no-market", action="store_true")
     s = sub.add_parser("check", help="持仓卖点体检"); s.add_argument("holdings", nargs="+", help="代码:成本价"); s.add_argument("--date")
     for name, h in [("backtest", "策略回测"), ("study", "信号事件研究"), ("sweep", "参数网格回测")]:
         s = sub.add_parser(name, help=h)

@@ -21,7 +21,8 @@ def prefilter(snap: pd.DataFrame, cfg: dict) -> pd.DataFrame:
         df = df[df["turnover"].between(s["min_turnover"], s["max_turnover"])]
     if "volume_ratio" in df:
         df = df[df["volume_ratio"].between(s["min_volume_ratio"], s["max_volume_ratio"])]
-    return df.sort_values("amount", ascending=False).head(s["top_n"])
+    df = df.sort_values("amount", ascending=False)
+    return df.head(s["top_n"]) if s.get("top_n") else df
 
 
 def technical_check(code: str, cfg: dict, end: str) -> dict | None:
