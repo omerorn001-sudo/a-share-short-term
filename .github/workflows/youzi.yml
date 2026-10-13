@@ -1,0 +1,32 @@
+name: daily-youzi
+# 每个交易日盘后抓龙虎榜游资动向，结果提交到 reports/youzi/（北京时间 18:40、20:10 各跑一次，后一次补齐晚更新的数据）
+on:
+  schedule:
+    - cron: "40 10 * * 1-5"
+    - cron: "10 12 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "日期 YYYY-MM-DD（留空=最新上榜日）"
+        required: false
+permissions:
+  contents: write
+jobs:
+  youzi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy PyYAML requests
+      - name: 抓取游资动向
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then D="--date ${{ github.event.inputs.date }}"; else D=""; fi
+          python -m ashare.cli youzi $D --stats 20 | tail -3
+      - name: 提交报告
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f reports/youzi
+          git diff --cached --quiet || (git commit -m "游资动向 $(ls -t reports/youzi/*.md | head -1 | xargs basename .md)" && git push)

@@ -108,3 +108,15 @@ pytest -q
 ## License
 
 MIT
+
+## 每日游资动向（龙虎榜）
+
+```bash
+python -m ashare.cli youzi                 # 最新上榜日（盘后约 17:00–18:30 更新）
+python -m ashare.cli youzi --date 2026-10-12 --stats 20
+```
+
+- 抓东财龙虎榜买卖前 5 营业部，按 `ashare/youzi_seats.yaml` 把营业部映射为游资外号（章盟主、作手新一、拉萨天团、量化打板……），另标出机构专用、北向、外资席位。
+- 输出：各游资买卖清单、个股游资合力榜、机构净买/净卖前 5、未识别大额席位（便于补充映射）、近 N 个上榜日各游资“战绩”（上榜后次日/2日/5日涨跌）。
+- 结果保存在 `reports/youzi/日期.md` 和 `日期_seats.csv`。
+- `.github/workflows/youzi.yml` 每个交易日北京时间 18:40、20:10 自动运行并把报告提交到仓库，也可在 Actions 页手动运行并指定日期。

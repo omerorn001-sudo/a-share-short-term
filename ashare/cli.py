@@ -132,6 +132,19 @@ def cmd_pick(a, cfg):
     print("> 仅供研究，不构成投资建议。")
 
 
+def cmd_youzi(a, cfg):
+    """每日游资动向：龙虎榜营业部 → 游资外号，输出买卖清单、个股合力、机构动向、游资战绩。"""
+    from .youzi import report
+    md, t = report(a.date, a.stats)
+    print(md)
+    out = Path(a.out or "reports/youzi"); out.mkdir(parents=True, exist_ok=True)
+    d = md.split("\n", 1)[0].split()[-1]
+    (out / f"{d}.md").write_text(md, encoding="utf-8")
+    if t:
+        t["raw"].to_csv(out / f"{d}_seats.csv", index=False, encoding="utf-8-sig")
+    print("已保存:", out / f"{d}.md")
+
+
 def cmd_check(a, cfg):
     """持仓体检：code:成本价 ..."""
     end = a.date or _today()
@@ -228,6 +241,9 @@ def main(argv=None):
     s.add_argument("--date"); s.add_argument("--top", type=int, default=40); s.add_argument("--no-market", action="store_true")
     s = sub.add_parser("pick", help="低吸 v4：选 10 只、次日只买第 1 只（2026-08/09 回测优化版）")
     s.add_argument("--date"); s.add_argument("--top", type=int, default=10)
+    s = sub.add_parser("youzi", help="每日游资动向（龙虎榜营业部→游资外号）")
+    s.add_argument("--date", help="YYYY-MM-DD，默认最新上榜日"); s.add_argument("--stats", type=int, default=20, help="附近 N 个上榜日游资战绩，0 关闭")
+    s.add_argument("--out", help="输出目录，默认 reports/youzi")
     s = sub.add_parser("check", help="持仓卖点体检"); s.add_argument("holdings", nargs="+", help="代码:成本价"); s.add_argument("--date")
     for name, h in [("backtest", "策略回测"), ("study", "信号事件研究"), ("sweep", "参数网格回测")]:
         s = sub.add_parser(name, help=h)
